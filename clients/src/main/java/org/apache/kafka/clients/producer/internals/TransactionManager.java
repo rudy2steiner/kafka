@@ -196,7 +196,7 @@ public class TransactionManager {
     }
 
     TransactionManager() {
-        this(new LogContext(), null, 0, 100);
+        this(new LogContext(), null, 0, 100L);
     }
 
     public synchronized TransactionalRequestResult initializeTransactions() {
@@ -839,7 +839,8 @@ public class TransactionManager {
                                                           String consumerGroupId) {
         for (Map.Entry<TopicPartition, OffsetAndMetadata> entry : offsets.entrySet()) {
             OffsetAndMetadata offsetAndMetadata = entry.getValue();
-            CommittedOffset committedOffset = new CommittedOffset(offsetAndMetadata.offset(), offsetAndMetadata.metadata());
+            CommittedOffset committedOffset = new CommittedOffset(offsetAndMetadata.offset(),
+                    offsetAndMetadata.metadata(), offsetAndMetadata.leaderEpoch());
             pendingTxnOffsetCommits.put(entry.getKey(), committedOffset);
         }
         TxnOffsetCommitRequest.Builder builder = new TxnOffsetCommitRequest.Builder(transactionalId, consumerGroupId,

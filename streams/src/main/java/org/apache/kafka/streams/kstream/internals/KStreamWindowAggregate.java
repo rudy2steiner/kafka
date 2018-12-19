@@ -44,10 +44,10 @@ public class KStreamWindowAggregate<K, V, Agg, W extends Window> implements KStr
 
     private boolean sendOldValues = false;
 
-    KStreamWindowAggregate(final Windows<W> windows,
-                           final String storeName,
-                           final Initializer<Agg> initializer,
-                           final Aggregator<? super K, ? super V, Agg> aggregator) {
+    public KStreamWindowAggregate(final Windows<W> windows,
+                                  final String storeName,
+                                  final Initializer<Agg> initializer,
+                                  final Aggregator<? super K, ? super V, Agg> aggregator) {
         this.windows = windows;
         this.storeName = storeName;
         this.initializer = initializer;
@@ -57,6 +57,10 @@ public class KStreamWindowAggregate<K, V, Agg, W extends Window> implements KStr
     @Override
     public Processor<K, V> get() {
         return new KStreamWindowAggregateProcessor();
+    }
+
+    public Windows<W> windows() {
+        return windows;
     }
 
     @Override
@@ -83,7 +87,7 @@ public class KStreamWindowAggregate<K, V, Agg, W extends Window> implements KStr
             lateRecordDropSensor = Sensors.lateRecordDropSensor(internalProcessorContext);
 
             windowStore = (WindowStore<K, Agg>) context.getStateStore(storeName);
-            tupleForwarder = new TupleForwarder<>(windowStore, context, new ForwardingCacheFlushListener<Windowed<K>, V>(context, sendOldValues), sendOldValues);
+            tupleForwarder = new TupleForwarder<>(windowStore, context, new ForwardingCacheFlushListener<Windowed<K>, V>(context), sendOldValues);
         }
 
         @Override
@@ -118,7 +122,7 @@ public class KStreamWindowAggregate<K, V, Agg, W extends Window> implements KStr
 
                     // update the store with the new value
                     windowStore.put(key, newAgg, windowStart);
-                    tupleForwarder.maybeForward(new Windowed<>(key, entry.getValue()), newAgg, oldAgg);
+                    tupleForwarder.maybeForward(new Windowed<>(key, entry.getValue()), newAgg, sendOldValues ? oldAgg : null);
                 } else {
                     log.debug(
                         "Skipping record for expired window. key=[{}] topic=[{}] partition=[{}] offset=[{}] timestamp=[{}] window=[{},{}) expiration=[{}]",

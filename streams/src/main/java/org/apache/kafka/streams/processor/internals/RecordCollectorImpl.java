@@ -153,8 +153,8 @@ public class RecordCollectorImpl implements RecordCollector {
                             final Serializer<K> keySerializer,
                             final Serializer<V> valueSerializer) {
         checkForException();
-        final byte[] keyBytes = keySerializer.serialize(topic, key);
-        final byte[] valBytes = valueSerializer.serialize(topic, value);
+        final byte[] keyBytes = keySerializer.serialize(topic, headers, key);
+        final byte[] valBytes = valueSerializer.serialize(topic, headers, value);
 
         final ProducerRecord<byte[], byte[]> serializedRecord = new ProducerRecord<>(topic, partition, timestamp, keyBytes, valBytes, headers);
 
@@ -249,8 +249,10 @@ public class RecordCollectorImpl implements RecordCollector {
     @Override
     public void close() {
         log.debug("Closing producer");
-        producer.close();
-        producer = null;
+        if (producer != null) {
+            producer.close();
+            producer = null;
+        }
         checkForException();
     }
 

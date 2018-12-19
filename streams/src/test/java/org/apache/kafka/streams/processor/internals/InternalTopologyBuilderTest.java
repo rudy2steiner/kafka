@@ -31,7 +31,7 @@ import org.apache.kafka.streams.state.KeyValueStore;
 import org.apache.kafka.streams.state.StoreBuilder;
 import org.apache.kafka.streams.state.Stores;
 import org.apache.kafka.test.MockProcessorSupplier;
-import org.apache.kafka.test.MockStoreBuilder;
+import org.apache.kafka.test.MockKeyValueStoreBuilder;
 import org.apache.kafka.test.MockTimestampExtractor;
 import org.apache.kafka.test.StreamsTestUtils;
 import org.junit.Test;
@@ -47,12 +47,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-import static org.apache.kafka.common.utils.Utils.mkList;
+import static java.time.Duration.ofSeconds;
+import static java.util.Arrays.asList;
 import static org.apache.kafka.common.utils.Utils.mkSet;
 import static org.hamcrest.core.IsInstanceOf.instanceOf;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -61,7 +63,7 @@ public class InternalTopologyBuilderTest {
 
     private final Serde<String> stringSerde = Serdes.String();
     private final InternalTopologyBuilder builder = new InternalTopologyBuilder();
-    private final StoreBuilder storeBuilder = new MockStoreBuilder("store", false);
+    private final StoreBuilder storeBuilder = new MockKeyValueStoreBuilder("store", false);
 
     @Test
     public void shouldAddSourceWithOffsetReset() {
@@ -101,7 +103,7 @@ public class InternalTopologyBuilderTest {
     @Test
     public void shouldAddPatternSourceWithoutOffsetReset() {
         final Pattern expectedPattern = Pattern.compile("test-.*");
-        
+
         builder.addSource(null, "source", null, stringSerde.deserializer(), stringSerde.deserializer(), Pattern.compile("test-.*"));
 
         assertEquals(expectedPattern.pattern(), builder.sourceTopicPattern().pattern());
@@ -168,7 +170,7 @@ public class InternalTopologyBuilderTest {
 
     @Test(expected = NullPointerException.class)
     public void testAddProcessorWithNullParents() {
-        builder.addProcessor("processor", new MockProcessorSupplier(), null);
+        builder.addProcessor("processor", new MockProcessorSupplier(), (String) null);
     }
 
     @Test
@@ -199,7 +201,7 @@ public class InternalTopologyBuilderTest {
 
     @Test(expected = NullPointerException.class)
     public void testAddSinkWithNullParents() {
-        builder.addSink("sink", "topic", null, null, null, null);
+        builder.addSink("sink", "topic", null, null, null, (String) null);
     }
 
     @Test
@@ -284,7 +286,7 @@ public class InternalTopologyBuilderTest {
 
     @Test(expected = TopologyException.class)
     public void testAddStateStoreWithNonExistingProcessor() {
-        builder.addStateStore(storeBuilder, "no-such-processsor");
+        builder.addStateStore(storeBuilder, "no-such-processor");
     }
 
     @Test
@@ -344,7 +346,7 @@ public class InternalTopologyBuilderTest {
         builder.addProcessor("processor-1", new MockProcessorSupplier(), "source-1");
 
         builder.addProcessor("processor-2", new MockProcessorSupplier(), "source-2", "processor-1");
-        builder.copartitionSources(mkList("source-1", "source-2"));
+        builder.copartitionSources(asList("source-1", "source-2"));
 
         builder.addProcessor("processor-3", new MockProcessorSupplier(), "source-3", "source-4");
 
@@ -374,14 +376,14 @@ public class InternalTopologyBuilderTest {
 
         builder.addProcessor("processor-1", new MockProcessorSupplier(), "source-1");
         builder.addProcessor("processor-2", new MockProcessorSupplier(), "source-2");
-        builder.addStateStore(new MockStoreBuilder("store-1", false), "processor-1", "processor-2");
+        builder.addStateStore(new MockKeyValueStoreBuilder("store-1", false), "processor-1", "processor-2");
 
         builder.addProcessor("processor-3", new MockProcessorSupplier(), "source-3");
         builder.addProcessor("processor-4", new MockProcessorSupplier(), "source-4");
-        builder.addStateStore(new MockStoreBuilder("store-2", false), "processor-3", "processor-4");
+        builder.addStateStore(new MockKeyValueStoreBuilder("store-2", false), "processor-3", "processor-4");
 
         builder.addProcessor("processor-5", new MockProcessorSupplier(), "source-5");
-        builder.addStateStore(new MockStoreBuilder("store-3", false));
+        builder.addStateStore(new MockKeyValueStoreBuilder("store-3", false));
         builder.connectProcessorAndStateStores("processor-5", "store-3");
 
         final Map<Integer, InternalTopologyBuilder.TopicsInfo> topicGroups = builder.topicGroups();
@@ -429,6 +431,57 @@ public class InternalTopologyBuilderTest {
         assertEquals(mkSet("source-5"), nodeNames(topology2.processors()));
     }
 
+    @Test
+    public void shouldAllowIncrementalBuilds() {
+        Map<Integer, Set<String>> oldNodeGroups, newNodeGroups;
+
+        oldNodeGroups = builder.nodeGroups();
+        builder.addSource(null, "source-1", null, null, null, "topic-1");
+        builder.addSource(null, "source-2", null, null, null, "topic-2");
+        newNodeGroups = builder.nodeGroups();
+        assertNotEquals(oldNodeGroups, newNodeGroups);
+
+        oldNodeGroups = newNodeGroups;
+        builder.addSource(null, "source-3", null, null, null, Pattern.compile(""));
+        builder.addSource(null, "source-4", null, null, null, Pattern.compile(""));
+        newNodeGroups = builder.nodeGroups();
+        assertNotEquals(oldNodeGroups, newNodeGroups);
+
+        oldNodeGroups = newNodeGroups;
+        builder.addProcessor("processor-1", new MockProcessorSupplier(), "source-1");
+        builder.addProcessor("processor-2", new MockProcessorSupplier(), "source-2");
+        builder.addProcessor("processor-3", new MockProcessorSupplier(), "source-3");
+        newNodeGroups = builder.nodeGroups();
+        assertNotEquals(oldNodeGroups, newNodeGroups);
+
+        oldNodeGroups = newNodeGroups;
+        builder.addSink("sink-1", "sink-topic", null, null, null, "processor-1");
+        newNodeGroups = builder.nodeGroups();
+        assertNotEquals(oldNodeGroups, newNodeGroups);
+
+        oldNodeGroups = newNodeGroups;
+        builder.addSink("sink-2", (k, v, ctx) -> "sink-topic", null, null, null, "processor-2");
+        newNodeGroups = builder.nodeGroups();
+        assertNotEquals(oldNodeGroups, newNodeGroups);
+
+        oldNodeGroups = newNodeGroups;
+        builder.addStateStore(new MockKeyValueStoreBuilder("store-1", false), "processor-1", "processor-2");
+        newNodeGroups = builder.nodeGroups();
+        assertNotEquals(oldNodeGroups, newNodeGroups);
+
+        oldNodeGroups = newNodeGroups;
+        builder.addStateStore(new MockKeyValueStoreBuilder("store-2", false));
+        builder.connectProcessorAndStateStores("processor-2", "store-2");
+        builder.connectProcessorAndStateStores("processor-3", "store-2");
+        newNodeGroups = builder.nodeGroups();
+        assertNotEquals(oldNodeGroups, newNodeGroups);
+
+        oldNodeGroups = newNodeGroups;
+        builder.addGlobalStore(new MockKeyValueStoreBuilder("global-store", false).withLoggingDisabled(), "globalSource", null, null, null, "globalTopic", "global-processor", new MockProcessorSupplier());
+        newNodeGroups = builder.nodeGroups();
+        assertNotEquals(oldNodeGroups, newNodeGroups);
+    }
+
     @Test(expected = NullPointerException.class)
     public void shouldNotAllowNullNameWhenAddingSink() {
         builder.addSink(null, "topic", null, null, null);
@@ -441,7 +494,7 @@ public class InternalTopologyBuilderTest {
 
     @Test(expected = NullPointerException.class)
     public void shouldNotAllowNullTopicChooserWhenAddingSink() {
-        builder.addSink("name", (TopicNameExtractor) null, null, null, null);
+        builder.addSink("name", (TopicNameExtractor<Object, Object>) null, null, null, null);
     }
 
     @Test(expected = NullPointerException.class)
@@ -536,7 +589,7 @@ public class InternalTopologyBuilderTest {
         builder.addProcessor("processor", new MockProcessorSupplier(), "source");
         builder.addStateStore(
             Stores.windowStoreBuilder(
-                Stores.persistentWindowStore("store1", 30_000L, 10_000L, false),
+                Stores.persistentWindowStore("store1", ofSeconds(30L), ofSeconds(10L), false),
                 Serdes.String(),
                 Serdes.String()
             ),
@@ -544,7 +597,7 @@ public class InternalTopologyBuilderTest {
         );
         builder.addStateStore(
                 Stores.sessionStoreBuilder(
-                        Stores.persistentSessionStore("store2", 30000), Serdes.String(), Serdes.String()
+                        Stores.persistentSessionStore("store2", ofSeconds(30)), Serdes.String(), Serdes.String()
                 ),
                 "processor"
         );
